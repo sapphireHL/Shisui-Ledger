@@ -1,5 +1,5 @@
 <h1>
-  <img src="nativeApp/app/src/main/res/mipmap-xxxhdpi/ic_launcher_motif_v8.png" width="56" height="56" alt="拾穗图标" align="absmiddle">
+  <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher_motif_v8.png" width="56" height="56" alt="拾穗图标" align="absmiddle">
   拾穗
 </h1>
 
@@ -19,8 +19,8 @@
 
 ## 项目结构
 
-- `nativeApp/app`：Android 应用、Jetpack Compose UI、Room、Hilt 和系统通知能力
-- `nativeApp/domain`：纯 Kotlin 业务模型、通知解析、商户处理、场景判断与关联去重
+- `app`：Android 应用、Jetpack Compose UI、Room、Hilt 和系统通知能力
+- `domain`：纯 Kotlin 业务模型、通知解析、商户处理、场景判断与关联去重
 
 ## Android 构建
 
@@ -29,14 +29,13 @@
 Windows：
 
 ```bat
-cd nativeApp
 gradlew.bat :domain:test :app:assembleRelease
 ```
 
 Release APK 输出路径：
 
 ```text
-nativeApp/app/build/outputs/apk/release/app-release.apk
+app/build/outputs/apk/release/app-release.apk
 ```
 
 ## 隐私
