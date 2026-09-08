@@ -1,4 +1,7 @@
-# 拾穗
+<h1>
+  <img src="nativeApp/app/src/main/res/mipmap-xxxhdpi/ic_launcher_motif_v8.png" width="56" height="56" alt="拾穗图标" align="absmiddle">
+  拾穗
+</h1>
 
 拾穗是一款本地优先的智能记账应用。它可以识别 Android 通知中的交易信息并自动整理账目，也支持手动记账、分类管理、账本管理和明细筛选。
 
