@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
     <queries>
         <package android:name="com.tencent.mm" />
         <package android:name="com.eg.android.AlipayGphone" />
@@ -9,7 +10,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <application android:name=".SmartLedgerApp" android:allowBackup="true" android:label="拾穗" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@style/Theme.SmartLedger" android:supportsRtl="true">
-        <activity android:name=".MainActivity" android:exported="true" android:theme="@style/Theme.SmartLedger">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:theme="@style/Theme.SmartLedger">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
         <service android:name=".notification.LedgerNotificationListener" android:label="拾穗自动记账" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" android:exported="false">

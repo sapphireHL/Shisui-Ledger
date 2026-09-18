@@ -13,11 +13,12 @@ interface TransactionRepository {
     suspend fun save(transaction: Transaction)
     suspend fun update(transaction: Transaction)
     suspend fun updateCategoryForMerchant(merchantKey: String, categoryId: String, primaryCategoryId: String?, updatedAt: Long)
+    suspend fun updateAiMappingForExpenseMerchant(merchantKey: String, categoryId: String, primaryCategoryId: String?, normalizedMerchantName: String, updatedAt: Long) {}
     suspend fun delete(id: String)
     suspend fun clearAll()
 }
 interface LedgerRepository { fun observeAll(): Flow<List<Ledger>>; suspend fun activeDefault(): Ledger; suspend fun setDefault(id: String); suspend fun save(ledger: Ledger); suspend fun delete(id: String); suspend fun clearCustom() }
-interface MerchantMemoryRepository { fun observeAll(): Flow<List<MerchantMemory>>; suspend fun find(merchantKey: String): MerchantMemory?; suspend fun save(memory: MerchantMemory); suspend fun clearAll() }
+interface MerchantMemoryRepository { fun observeAll(): Flow<List<MerchantMemory>>; suspend fun find(merchantKey: String): MerchantMemory?; suspend fun save(memory: MerchantMemory); suspend fun delete(id: String) {}; suspend fun clearAll() }
 interface CategoryRepository { fun observeAll(): Flow<List<Category>>; suspend fun findById(id: String): Category?; suspend fun seedDefaults(); suspend fun save(category: Category) }
 interface IdGenerator { fun newId(): String }
 interface FingerprintFactory { fun create(parsed: ParsedTransaction, merchantKey: String): String }

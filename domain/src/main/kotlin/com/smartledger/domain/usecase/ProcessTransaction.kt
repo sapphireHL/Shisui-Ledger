@@ -24,9 +24,14 @@ class ProcessParsedTransaction(
         if (transactions.findDuplicate(fingerprint, parsed.sourceType, parsed.amountMinor, normalized.key, parsed.occurredAtEpochMillis)) return null
         val defaultLedger = ledgers.activeDefault()
         val memory = parsed.merchantName?.let {
-            memories.find(normalized.key) ?: memories.observeAll().first().firstOrNull { saved ->
-                normalizer.normalize(saved.canonicalName).key == normalized.key
-            }
+            memories.find(normalized.key)
+                ?: findMerchantMemory(normalized.key, memories.observeAll().first())
+                ?: transactions.observeAll().first()
+                    .asSequence()
+                    .filter { row -> row.status == TransactionStatus.CONFIRMED && row.categoryId != null && row.merchantName != null }
+                    .filter { row -> normalizer.normalize(row.merchantName!!).key == normalized.key }
+                    .maxByOrNull { row -> row.updatedAtEpochMillis }
+                    ?.let { row -> MerchantMemory("history:${row.id}", normalized.key, normalized.canonicalName, row.categoryId, row.ledgerId, .9f, MemorySource.RULE, 1, row.createdAtEpochMillis, row.updatedAtEpochMillis, row.normalizedMerchantName) }
         }
         val decision = sceneEngine.resolve(parsed, contextProvider.current(), memory, defaultLedger.id)
         val refunded = if (parsed.direction in setOf(TransactionDirection.REFUND, TransactionDirection.REIMBURSEMENT)) transactions.findRefundCandidate(parsed.amountMinor, parsed.currency, normalized.key, parsed.occurredAtEpochMillis) else null
@@ -40,7 +45,7 @@ class ProcessParsedTransaction(
             rawNotification = parsed.rawText, parserConfidence = parsed.confidence, sceneConfidence = decision.confidence,
             status = status, fingerprint = fingerprint, createdAtEpochMillis = now, updatedAtEpochMillis = now,
             primaryCategoryId = refunded?.primaryCategoryId ?: category?.parentId ?: category?.id, linkedTransactionId = refunded?.id,
-            bankCardLast4 = parsed.bankCardLast4)
+            bankCardLast4 = parsed.bankCardLast4, normalizedMerchantName = memory?.normalizedMerchantName)
         transactions.save(transaction)
         if (parsed.direction == TransactionDirection.REIMBURSEMENT && refunded != null) transactions.update(refunded.copy(reimbursementStatus = ReimbursementStatus.REIMBURSED, updatedAtEpochMillis = now))
         return transaction
@@ -59,7 +64,7 @@ class ConfirmTransaction(
         transactions.update(transaction.copy(categoryId = categoryId, primaryCategoryId = category?.parentId ?: category?.id, ledgerId = ledgerId, status = TransactionStatus.CONFIRMED, updatedAtEpochMillis = clock.nowEpochMillis()))
         if (remember && transaction.merchantName != null) {
             val merchant = normalizer.normalize(transaction.merchantName)
-            memory.remember(merchant, categoryId, ledgerId)
+            memory.remember(merchant, categoryId, ledgerId, transaction.normalizedMerchantName, transaction.aiAnalysisStatus == AiAnalysisStatus.COMPLETED, transaction.aiSuggestedMerchantTerms)
             transactions.updateCategoryForMerchant(merchant.key, categoryId, category?.parentId ?: category?.id, clock.nowEpochMillis())
         }
     }

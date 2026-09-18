@@ -21,6 +21,7 @@ import javax.inject.Singleton
     override suspend fun save(transaction: Transaction) = dao.insert(transaction.entity(normalizer.normalize(transaction.merchantName ?: "未知商户").key))
     override suspend fun update(transaction: Transaction) = dao.update(transaction.entity(normalizer.normalize(transaction.merchantName ?: "未知商户").key))
     override suspend fun updateCategoryForMerchant(merchantKey: String, categoryId: String, primaryCategoryId: String?, updatedAt: Long) = dao.updateCategoryForMerchant(merchantKey, categoryId, primaryCategoryId, updatedAt)
+    override suspend fun updateAiMappingForExpenseMerchant(merchantKey: String, categoryId: String, primaryCategoryId: String?, normalizedMerchantName: String, updatedAt: Long) = dao.updateAiMappingForExpenseMerchant(merchantKey, categoryId, primaryCategoryId, normalizedMerchantName, updatedAt)
     override suspend fun delete(id: String) = dao.delete(id)
     override suspend fun clearAll() = dao.clearAll()
 }
@@ -43,6 +44,7 @@ import javax.inject.Singleton
     override fun observeAll() = dao.observeAll().map { rows -> rows.map(MerchantMemoryEntity::domain) }
     override suspend fun find(merchantKey: String) = dao.find(merchantKey)?.domain()
     override suspend fun save(memory: MerchantMemory) = dao.save(memory.entity())
+    override suspend fun delete(id: String) = dao.delete(id)
     override suspend fun clearAll() = dao.clearAll()
 }
 @Singleton class RoomCategoryRepository @Inject constructor(private val dao: CategoryDao) : CategoryRepository {

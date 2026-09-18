@@ -110,7 +110,7 @@ class CmbParser : BasePaymentParser() {
     override fun parse(notification: RawNotification) = build(
         notification, "招商银行", SourceType.CMB,
         Regex("信用卡通知|信用卡消费|快捷支付|交易提醒|消费|入账|扣款|还款成功"),
-        denied = Regex("积分|活动|优惠|账单提醒"),
+        denied = Regex("积分|活动|优惠|账单提醒|补贴|返现|至高|领券|权益"),
         merchantOverride = { text ->
             Regex("在[【\\[]([^】\\]]+)[】\\]](?:发生|有)").find(text)?.groupValues?.get(1)?.trim()
                 ?.replace(Regex("^(?:(?:财付通|微信支付|支付宝)[-－—:：\\s]*)+"), "")

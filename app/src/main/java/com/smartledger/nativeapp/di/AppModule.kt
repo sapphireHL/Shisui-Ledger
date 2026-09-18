@@ -19,13 +19,14 @@ import javax.inject.Singleton
 
 @Module @InstallIn(SingletonComponent::class)
 object AppModule {
-    @Provides @Singleton fun database(@ApplicationContext context: Context) = Room.databaseBuilder(context, AppDatabase::class.java, "smart-ledger-mvp.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build()
+    @Provides @Singleton fun database(@ApplicationContext context: Context) = Room.databaseBuilder(context, AppDatabase::class.java, "smart-ledger-mvp.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14).build()
     @Provides fun transactionDao(db: AppDatabase) = db.transactions()
     @Provides fun ledgerDao(db: AppDatabase) = db.ledgers()
     @Provides fun memoryDao(db: AppDatabase) = db.memories()
     @Provides fun categoryDao(db: AppDatabase) = db.categories()
     @Provides fun rawNotificationDao(db: AppDatabase) = db.rawNotifications()
     @Provides fun locationPlaceDao(db: AppDatabase) = db.locations()
+    @Provides fun exchangeRateDao(db: AppDatabase) = db.exchangeRates()
     @Provides fun transactions(value: RoomTransactionRepository): TransactionRepository = value
     @Provides fun ledgers(value: RoomLedgerRepository): LedgerRepository = value
     @Provides fun memories(value: RoomMerchantMemoryRepository): MerchantMemoryRepository = value
