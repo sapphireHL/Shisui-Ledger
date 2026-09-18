@@ -11,12 +11,20 @@ plugins {
 android {
     namespace = "com.smartledger.nativeapp"
     compileSdk = 35
+    signingConfigs {
+        create("stableRelease") {
+            storeFile = rootProject.file(".tools/release-signing/legacy-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
     defaultConfig {
         applicationId = "com.smartledger.nativeapp"
         minSdk = 29
         targetSdk = 35
-        versionCode = 75
-        versionName = "1.9.3"
+        versionCode = 133
+        versionName = "1.10.55"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         javaCompileOptions { annotationProcessorOptions { arguments["room.schemaLocation"] = "$projectDir/schemas" } }
     }
@@ -27,7 +35,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("stableRelease")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

@@ -26,6 +26,7 @@ class ParserTest {
     @Test fun amountAndTimeAreNotMistakenForCard() { val v = assertNotNull(alipay.parse(raw("com.eg.android.AlipayGphone", "付款成功", "09月02日 15:30 支付成功 28.00元"))); assertNull(v.bankCardLast4) }
     @Test fun storedRawNotificationCanBeBackfilled() { assertEquals("6503", extractBankCardLast4("招商银行 信用卡通知：您尾号6503的信用卡消费50.00人民币")) }
     @Test fun cmbWechatGroupCollectionIsExpenseAndExtractsMerchant() { val v = assertNotNull(cmb.parse(raw("cmb.pb", "招商银行", "您账户6678于08月29日15:30在【财付通-微信支付-群收款】发生快捷支付扣款，人民币17.00元"))); assertEquals(TransactionDirection.EXPENSE, v.direction); assertEquals(1700, v.amountMinor); assertEquals("群收款", v.merchantName) }
+    @Test fun cmbPromotionAmountIsRejected() { assertNull(cmb.parse(raw("cmb.pb", "招商银行", "境外消费享320元补贴+至高3%返现"))) }
     @Test fun alipayPromotionIsRejected() { assertNull(alipay.parse(raw("com.eg.android.AlipayGphone", "碰友节给商家送福利", "领取碰一下后，首次碰一下收款得2元奖励"))) }
     @Test fun alipayRealExpense() { val v = assertNotNull(alipay.parse(raw("com.eg.android.AlipayGphone", "交易提醒", "你有一笔50.00元的支出，点击领取4个支付宝积分。"))); assertEquals(5000, v.amountMinor) }
     @Test fun alipayPasswordlessAutoDebitIsRecognized() { val v = assertNotNull(alipay.parse(raw("com.eg.android.AlipayGphone", "交易提醒", "你在特斯拉（上海）有限公司有一笔9.99元的免密/自动扣款支付，点击领取2个支付宝积分。"))); assertEquals(TransactionDirection.EXPENSE, v.direction); assertEquals(999, v.amountMinor); assertEquals("特斯拉（上海）有限公司", v.merchantName) }

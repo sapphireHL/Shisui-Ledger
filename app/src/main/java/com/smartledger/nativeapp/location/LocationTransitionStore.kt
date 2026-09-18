@@ -38,6 +38,8 @@ class LocationTransitionStore @Inject constructor(@ApplicationContext private va
     private val scenePrefs = context.getSharedPreferences("scene_context", Context.MODE_PRIVATE)
     private val _transition = MutableStateFlow<LocationTransition?>(null)
     val transition: StateFlow<LocationTransition?> = _transition.asStateFlow()
+    private val _current = MutableStateFlow(readBaseline() ?: readHistory().firstOrNull())
+    val current: StateFlow<RecentLocation?> = _current.asStateFlow()
     private val _consent = MutableStateFlow(prefs.getBoolean("consent", false))
     val consent: StateFlow<Boolean> = _consent.asStateFlow()
     private val _consentPromptNeeded = MutableStateFlow(!prefs.contains("consentDecision"))
@@ -52,6 +54,7 @@ class LocationTransitionStore @Inject constructor(@ApplicationContext private va
         val location = runCatching { manager.getProviders(true).mapNotNull(manager::getLastKnownLocation).maxByOrNull { it.time } }.getOrNull() ?: return@withContext
         val address = runCatching { Geocoder(context, Locale.CHINA).getFromLocation(location.latitude, location.longitude, 1)?.firstOrNull() }.getOrNull() ?: return@withContext
         val sample = address.toRecentLocation() ?: return@withContext
+        _current.value = sample
         val history = readHistory()
         val baseline = readBaseline() ?: history.firstOrNull()
         writeHistory(sample, history)
@@ -82,6 +85,7 @@ class LocationTransitionStore @Inject constructor(@ApplicationContext private va
         else {
             prefs.edit().clear().putBoolean("consent", false).putBoolean("consentDecision", true).apply()
             _transition.value = null
+            _current.value = null
         }
     }
 
@@ -89,6 +93,7 @@ class LocationTransitionStore @Inject constructor(@ApplicationContext private va
         val allowed = _consent.value
         prefs.edit().clear().putBoolean("consent", allowed).putBoolean("consentDecision", true).apply()
         _transition.value = null
+        _current.value = null
     }
 
     private fun Address.toRecentLocation(): RecentLocation? {

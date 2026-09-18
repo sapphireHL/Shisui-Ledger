@@ -10,6 +10,7 @@ import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationCompat
 import androidx.work.*
 import com.smartledger.domain.merchant.MerchantNormalizer
+import com.smartledger.domain.merchant.findMerchantMemory
 import com.smartledger.domain.model.*
 import com.smartledger.domain.parser.CompositeNotificationParser
 import com.smartledger.domain.repository.CategoryRepository
@@ -22,6 +23,7 @@ import com.smartledger.nativeapp.R
 import com.smartledger.nativeapp.data.local.RawNotificationDao
 import com.smartledger.nativeapp.data.local.RawNotificationEntity
 import com.smartledger.nativeapp.data.settings.AppSettingsStore
+import com.smartledger.nativeapp.ai.ZhipuConnectionService
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.AndroidEntryPoint
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -108,6 +111,7 @@ data class NotificationDebugEntry(
     private val categories: CategoryRepository,
     private val memories: MerchantMemoryRepository,
     private val normalizer: MerchantNormalizer,
+    private val ai: ZhipuConnectionService,
 ) {
     private val processMutex = Mutex()
     private val resultNotificationHistory = context.getSharedPreferences("result_notification_history", Context.MODE_PRIVATE)
@@ -205,6 +209,7 @@ data class NotificationDebugEntry(
             sourceApp = resolvedApp,
             sourceType = resolvedType,
             merchantName = merchant,
+            normalizedMerchantName = memory?.normalizedMerchantName ?: old.normalizedMerchantName,
             categoryId = categoryId,
             primaryCategoryId = rememberedCategory?.let { it.parentId ?: it.id } ?: delivery?.parentId ?: old.primaryCategoryId,
             ledgerId = old.ledgerId,
@@ -222,6 +227,7 @@ data class NotificationDebugEntry(
         val dueAt = System.currentTimeMillis() + delayMillis
         resultNotificationDue.edit().putLong(transactionId, dueAt).apply()
         preciseResultJobs.remove(transactionId)?.cancel()
+        WorkManager.getInstance(context).cancelUniqueWork("transaction-result-$transactionId")
         preciseResultJobs[transactionId] = resultScope.launch {
             delay(delayMillis)
             showFinalResult(transactionId)
@@ -232,15 +238,11 @@ data class NotificationDebugEntry(
             .setInputData(workDataOf(TransactionResultNotificationWorker.KEY_TRANSACTION_ID to transactionId))
             .addTag(TransactionResultNotificationWorker.TAG)
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            "transaction-result-$transactionId",
-            ExistingWorkPolicy.REPLACE,
-            request,
-        )
-        debug.log(context.packageName, "RESULT_NOTIFICATION", "DELAYED", "等待${delayMillis / 1_000}秒合并窗口后发送最终结果", correlationId = transactionId)
+        WorkManager.getInstance(context).enqueueUniqueWork("transaction-result-$transactionId", ExistingWorkPolicy.REPLACE, request)
+        debug.log(context.packageName, "RESULT_NOTIFICATION", "DELAYED", "等待${delayMillis / 1_000}秒融合窗口后发送最终结果", correlationId = transactionId)
     }
     suspend fun showFinalResult(transactionId: String) {
-        transactions.findById(transactionId)?.let(::showResult)
+        transactions.findById(transactionId)?.let { showResult(it) }
     }
     suspend fun flushDueResultNotifications(now: Long = System.currentTimeMillis()) {
         resultNotificationDue.all.entries
@@ -252,15 +254,94 @@ data class NotificationDebugEntry(
     }
     fun cancelScheduledResult(transactionId: String) {
         WorkManager.getInstance(context).cancelUniqueWork("transaction-result-$transactionId")
+        WorkManager.getInstance(context).cancelUniqueWork("pending-ai-$transactionId")
         claimResultNotification(transactionId)
     }
-    fun showResult(value: Transaction) {
+    suspend fun showResult(value: Transaction) {
         if (!claimResultNotification(value.id)) return
+        val pending = value.status == TransactionStatus.PENDING_CONFIRMATION
+        val aiQueued = pending && enqueuePendingAiAnalysis(value)
         val manager = context.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) manager.createNotificationChannel(NotificationChannel(CHANNEL, "自动记账", NotificationManager.IMPORTANCE_HIGH))
-        val open = PendingIntent.getActivity(context, 7, Intent(context, MainActivity::class.java).putExtra("openPending", true), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val pending = value.status == TransactionStatus.PENDING_CONFIRMATION
-        manager.notify(value.id.hashCode(), NotificationCompat.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_ledger).setContentTitle(if (pending) "有一笔交易需要确认" else "已自动记账").setContentText("${value.merchantName ?: "未知商户"} · ${formatMoney(value.amountMinor, value.currency)}").setContentIntent(open).setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_HIGH).build())
+        val destination = if (pending) "openPending" else "openConfirmed"
+        val openIntent = Intent(context, MainActivity::class.java)
+            .putExtra(destination, true)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val open = PendingIntent.getActivity(context, value.id.hashCode(), openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        manager.notify(value.id.hashCode(), NotificationCompat.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_ledger).setContentTitle(if (aiQueued) "有一笔待确认，AI分析中" else if (pending) "有一笔交易需要确认" else "已自动记账").setContentText("${value.merchantName ?: "未知商户"} · ${formatMoney(value.amountMinor, value.currency)}").setContentIntent(open).setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_HIGH).build())
+    }
+
+    suspend fun enqueuePendingAiAnalysis(value: Transaction, existingWorkPolicy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP): Boolean {
+        if (value.status != TransactionStatus.PENDING_CONFIRMATION || !ai.isConnected() || value.aiAnalysisStatus == AiAnalysisStatus.COMPLETED) return false
+        transactions.update(value.copy(aiAnalysisStatus = AiAnalysisStatus.ANALYZING, aiAnalysisError = null, updatedAtEpochMillis = System.currentTimeMillis()))
+        val request = OneTimeWorkRequestBuilder<PendingTransactionAiWorker>()
+            .setInputData(workDataOf(PendingTransactionAiWorker.KEY_TRANSACTION_ID to value.id))
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
+            .addTag(PendingTransactionAiWorker.TAG)
+            .build()
+        return runCatching {
+            WorkManager.getInstance(context).enqueueUniqueWork("pending-ai-${value.id}", existingWorkPolicy, request).await()
+            debug.log(context.packageName, "AI_WORKER", "ENQUEUED", "待确认账目已进入 AI 分类队列", correlationId = value.id)
+            true
+        }.getOrElse { error ->
+            markAiAnalysisFailed(value.id, error)
+            false
+        }
+    }
+
+    suspend fun retryPendingAiAnalysis(transactionId: String): Boolean {
+        val value = transactions.findById(transactionId) ?: return false
+        if (value.status != TransactionStatus.PENDING_CONFIRMATION || value.aiAnalysisStatus != AiAnalysisStatus.FAILED) return false
+        return enqueuePendingAiAnalysis(value, ExistingWorkPolicy.REPLACE)
+    }
+
+    suspend fun analyzePendingWithAi(transactionId: String) {
+        val value = transactions.findById(transactionId) ?: return
+        if (value.status != TransactionStatus.PENDING_CONFIRMATION || value.aiAnalysisStatus == AiAnalysisStatus.COMPLETED) return
+        if (!ai.isConnected()) {
+            transactions.update(value.copy(aiAnalysisStatus = AiAnalysisStatus.NONE, aiAnalysisError = null, updatedAtEpochMillis = System.currentTimeMillis()))
+            return
+        }
+        transactions.update(value.copy(aiAnalysisStatus = AiAnalysisStatus.ANALYZING, aiAnalysisError = null, updatedAtEpochMillis = System.currentTimeMillis()))
+        val merchantKey = normalizer.normalize(value.merchantName ?: "未知商户").key
+        val cached = findMerchantMemory(merchantKey, memories.observeAll().first())
+        val cachedCategoryId = cached?.categoryId
+        if (cached != null && cachedCategoryId != null) {
+            val category = categories.findById(cachedCategoryId) ?: DefaultCategories.firstOrNull { it.id == cachedCategoryId }
+            transactions.update(value.copy(
+                normalizedMerchantName = cached.normalizedMerchantName,
+                aiAnalysisStatus = AiAnalysisStatus.COMPLETED,
+                aiSuggestedCategoryId = cachedCategoryId,
+                aiSuggestedCategoryName = category?.name,
+                aiSuggestedMerchantTerms = cached.matchTerms,
+                aiAnalyzedAtEpochMillis = System.currentTimeMillis(),
+                aiAnalysisError = null,
+                updatedAtEpochMillis = System.currentTimeMillis(),
+            ))
+            debug.log(context.packageName, "AI_WORKER", "CACHE_HIT", "商户缓存/匹配词命中，未调用 AI", correlationId = transactionId)
+            return
+        }
+        val result = ai.classifyMerchant(value.merchantName ?: "未知商户", categories.observeAll().first()).getOrThrow()
+        val suggestedId = result.secondaryCategoryId ?: result.primaryCategoryId
+        val suggestedName = listOfNotNull(result.primaryCategory, result.secondaryCategory).joinToString(" / ")
+        val latest = transactions.findById(transactionId) ?: return
+        if (latest.status != TransactionStatus.PENDING_CONFIRMATION || latest.aiAnalysisStatus == AiAnalysisStatus.COMPLETED) return
+        transactions.update(latest.copy(normalizedMerchantName = result.normalizedMerchantName, aiAnalysisStatus = AiAnalysisStatus.COMPLETED, aiSuggestedCategoryId = suggestedId, aiSuggestedCategoryName = suggestedName, aiSuggestedMerchantTerms = result.merchantMatchTerms, aiAnalyzedAtEpochMillis = System.currentTimeMillis(), aiAnalysisError = null, updatedAtEpochMillis = System.currentTimeMillis()))
+        debug.log(context.packageName, "AI_WORKER", "SUCCEEDED", "商户=${result.normalizedMerchantName}；建议=$suggestedName", correlationId = transactionId)
+    }
+
+    suspend fun markAiAnalysisRetrying(transactionId: String, error: Throwable) {
+        val value = transactions.findById(transactionId) ?: return
+        if (value.status != TransactionStatus.PENDING_CONFIRMATION || value.aiAnalysisStatus == AiAnalysisStatus.COMPLETED) return
+        transactions.update(value.copy(aiAnalysisStatus = AiAnalysisStatus.ANALYZING, aiAnalysisError = null, updatedAtEpochMillis = System.currentTimeMillis()))
+        debug.log(context.packageName, "AI_WORKER", "RETRY", error.message ?: error::class.java.simpleName, correlationId = transactionId)
+    }
+
+    suspend fun markAiAnalysisFailed(transactionId: String, error: Throwable) {
+        val value = transactions.findById(transactionId) ?: return
+        if (value.status != TransactionStatus.PENDING_CONFIRMATION || value.aiAnalysisStatus == AiAnalysisStatus.COMPLETED) return
+        transactions.update(value.copy(aiAnalysisStatus = AiAnalysisStatus.FAILED, aiAnalysisError = error.message?.take(300), aiAnalyzedAtEpochMillis = System.currentTimeMillis(), updatedAtEpochMillis = System.currentTimeMillis()))
+        debug.log(context.packageName, "AI_WORKER", "FAILED", error.message ?: error::class.java.simpleName, correlationId = transactionId)
     }
     @Synchronized private fun claimResultNotification(transactionId: String): Boolean {
         if (resultNotificationHistory.contains(transactionId)) {
@@ -328,6 +409,31 @@ class TransactionResultNotificationWorker(context: Context, params: WorkerParame
     companion object {
         const val KEY_TRANSACTION_ID = "transactionId"
         const val TAG = "transaction-result-notification"
+    }
+}
+
+class PendingTransactionAiWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val transactionId = inputData.getString(KEY_TRANSACTION_ID) ?: return Result.failure()
+        val processor = EntryPointAccessors.fromApplication(applicationContext, NotificationWorkerEntryPoint::class.java).processor()
+        return try {
+            processor.analyzePendingWithAi(transactionId)
+            Result.success()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            if (runAttemptCount < 2) {
+                processor.markAiAnalysisRetrying(transactionId, error)
+                Result.retry()
+            } else {
+                processor.markAiAnalysisFailed(transactionId, error)
+                Result.failure()
+            }
+        }
+    }
+    companion object {
+        const val KEY_TRANSACTION_ID = "transactionId"
+        const val TAG = "pending-ai-classification"
     }
 }
 

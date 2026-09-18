@@ -29,12 +29,39 @@ class MerchantMemoryService(
     private val clock: Clock,
 ) {
     suspend fun recall(key: String) = repository.find(key)
-    suspend fun remember(merchant: NormalizedMerchant, categoryId: String?, ledgerId: String?) {
+    suspend fun remember(merchant: NormalizedMerchant, categoryId: String?, ledgerId: String?, normalizedMerchantName: String? = null, aiAnalyzed: Boolean = false, matchTerms: List<String> = emptyList()) {
         val now = clock.nowEpochMillis()
         val old = repository.find(merchant.key)
         repository.save(
             MerchantMemory(old?.id ?: idGenerator.newId(), merchant.key, merchant.canonicalName, categoryId, ledgerId,
-                1f, MemorySource.USER, (old?.useCount ?: 0) + 1, old?.createdAtEpochMillis ?: now, now),
+                1f, MemorySource.USER, (old?.useCount ?: 0) + 1, old?.createdAtEpochMillis ?: now, now,
+                normalizedMerchantName?.trim()?.takeIf { it.isNotBlank() } ?: old?.normalizedMerchantName,
+                aiAnalyzed || old?.aiAnalyzed == true,
+                sanitizeMerchantMatchTerms((old?.matchTerms.orEmpty() + matchTerms + merchant.canonicalName + listOfNotNull(normalizedMerchantName)))),
         )
     }
+}
+
+fun sanitizeMerchantMatchTerms(values: List<String>): List<String> = values.asSequence()
+    .map { it.trim().lowercase().replace(Regex("[\\s·•._—-]+"), "") }
+    .filter { it.length in 3..40 && it != "未知商户" }
+    .distinct()
+    .take(12)
+    .toList()
+
+fun findMerchantMemory(rawKey: String, memories: List<MerchantMemory>): MerchantMemory? {
+    memories.firstOrNull { it.merchantKey == rawKey }?.let { return it }
+    if (rawKey.length < 3) return null
+    val candidates = memories.mapNotNull { memory ->
+        val terms = sanitizeMerchantMatchTerms(memory.matchTerms + memory.merchantKey + memory.canonicalName + listOfNotNull(memory.normalizedMerchantName))
+        val best = terms.filter { term -> rawKey.contains(term) || term.contains(rawKey) }
+            .maxOfOrNull { term ->
+                if (term.length >= 4 && rawKey.contains(term)) .9f
+                else minOf(rawKey.length, term.length).toFloat() / maxOf(rawKey.length, term.length)
+            } ?: return@mapNotNull null
+        memory to best
+    }.filter { it.second >= .55f }.sortedByDescending { it.second }
+    val best = candidates.firstOrNull() ?: return null
+    if (candidates.getOrNull(1)?.second?.let { best.second - it < .12f } == true) return null
+    return best.first
 }

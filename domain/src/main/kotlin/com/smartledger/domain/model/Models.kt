@@ -3,9 +3,11 @@ package com.smartledger.domain.model
 enum class SourceType { WECHAT, ALIPAY, CMB, CMB_LIFE, MANUAL, OTHER }
 enum class TransactionDirection { EXPENSE, INCOME, TRANSFER, REFUND, CREDIT_CARD_REPAYMENT, ACCOUNT_TOP_UP, REIMBURSEMENT, BORROW_IN, BORROW_OUT, INVESTMENT_BUY, INVESTMENT_REDEMPTION, UNKNOWN }
 enum class TransactionStatus { CONFIRMED, PENDING_CONFIRMATION, IGNORED }
+enum class AiAnalysisStatus { NONE, ANALYZING, COMPLETED, FAILED }
 enum class CategoryType { EXPENSE, INCOME, SPECIAL }
 enum class ReimbursementStatus { NONE, PENDING, REIMBURSED }
 enum class LedgerType { DEFAULT, TRAVEL, CUSTOM }
+enum class BudgetType { MONTHLY, TOTAL }
 enum class MemorySource { RULE, USER, AI }
 enum class LocationType { HOME, WORK, AIRPORT, HOTEL, UNKNOWN }
 enum class TravelState { NORMAL, POSSIBLE_TRAVEL, TRAVELING, POSSIBLE_RETURN }
@@ -21,18 +23,40 @@ data class Transaction(
     val primaryCategoryId: String? = null, val linkedTransactionId: String? = null,
     val reimbursementStatus: ReimbursementStatus = ReimbursementStatus.NONE,
     val bankCardLast4: String? = null,
+    val normalizedMerchantName: String? = null,
+    val aiAnalysisStatus: AiAnalysisStatus = AiAnalysisStatus.NONE,
+    val aiSuggestedCategoryId: String? = null,
+    val aiSuggestedCategoryName: String? = null,
+    val aiAnalyzedAtEpochMillis: Long? = null,
+    val aiAnalysisError: String? = null,
+    val aiSuggestedMerchantTerms: List<String> = emptyList(),
 )
 
 data class Ledger(
     val id: String, val name: String, val type: LedgerType, val icon: String, val currency: String,
     val startAtEpochMillis: Long? = null, val endAtEpochMillis: Long? = null,
     val isActive: Boolean = true, val createdAtEpochMillis: Long, val updatedAtEpochMillis: Long,
+    val budgetType: BudgetType? = null, val budgetAmountMinor: Long = 0,
+    val totalBudgetStartTs: Long? = null,
 )
+
+data class BookBudget(
+    val type: BudgetType,
+    val currency: String,
+    val budgetAmountMinor: Long,
+    val spentAmountMinor: Long,
+) {
+    val remainingAmountMinor: Long get() = budgetAmountMinor - spentAmountMinor
+    val usageRate: Double get() = spentAmountMinor.toDouble() / budgetAmountMinor.toDouble()
+}
 
 data class MerchantMemory(
     val id: String, val merchantKey: String, val canonicalName: String,
     val categoryId: String?, val preferredLedgerId: String?, val confidence: Float,
     val source: MemorySource, val useCount: Int, val createdAtEpochMillis: Long, val updatedAtEpochMillis: Long,
+    val normalizedMerchantName: String? = null,
+    val aiAnalyzed: Boolean = false,
+    val matchTerms: List<String> = emptyList(),
 )
 
 data class Category(

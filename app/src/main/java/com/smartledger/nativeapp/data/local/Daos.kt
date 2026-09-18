@@ -5,40 +5,52 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao interface TransactionDao {
     @Query("SELECT * FROM transactions ORDER BY occurredAtEpochMillis DESC") fun observeAll(): Flow<List<TransactionEntity>>
+    @Query("SELECT * FROM transactions ORDER BY occurredAtEpochMillis DESC") suspend fun snapshotAll(): List<TransactionEntity>
     @Query("SELECT * FROM transactions WHERE status = 'PENDING_CONFIRMATION' ORDER BY occurredAtEpochMillis DESC") fun observePending(): Flow<List<TransactionEntity>>
     @Query("SELECT * FROM transactions WHERE id=:id LIMIT 1") suspend fun findById(id: String): TransactionEntity?
     @Query("SELECT COUNT(*) FROM transactions WHERE fingerprint=:fingerprint OR (sourceType=:source AND amountMinor=:amount AND merchantKey=:merchantKey AND occurredAtEpochMillis BETWEEN :from AND :to)") suspend fun duplicateCount(fingerprint: String, source: String, amount: Long, merchantKey: String, from: Long, to: Long): Int
     @Query("SELECT * FROM transactions WHERE amountMinor=:amount AND currency=:currency AND (direction=:direction OR direction='UNKNOWN' OR :direction='UNKNOWN') AND status != 'IGNORED' AND occurredAtEpochMillis BETWEEN :from AND :to AND ((:source IN ('WECHAT','ALIPAY') AND sourceType IN ('CMB','CMB_LIFE')) OR (:source IN ('CMB','CMB_LIFE') AND sourceType IN ('WECHAT','ALIPAY','CMB','CMB_LIFE') AND sourceType != :source)) ORDER BY ABS(occurredAtEpochMillis - :occurredAt) LIMIT 1") suspend fun correlationCandidate(source: String, amount: Long, currency: String, direction: String, from: Long, to: Long, occurredAt: Long): TransactionEntity?
     @Query("SELECT * FROM transactions WHERE direction='EXPENSE' AND status='CONFIRMED' AND amountMinor=:amount AND currency=:currency AND merchantKey=:merchantKey AND occurredAtEpochMillis < :occurredAt AND occurredAtEpochMillis >= :from ORDER BY occurredAtEpochMillis DESC LIMIT 1") suspend fun refundCandidate(amount: Long, currency: String, merchantKey: String, from: Long, occurredAt: Long): TransactionEntity?
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insert(value: TransactionEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun replaceAll(values: List<TransactionEntity>)
     @Update suspend fun update(value: TransactionEntity)
     @Query("UPDATE transactions SET categoryId=:categoryId, primaryCategoryId=:primaryCategoryId, status=CASE WHEN status='PENDING_CONFIRMATION' THEN 'CONFIRMED' ELSE status END, updatedAtEpochMillis=:updatedAt WHERE merchantKey=:merchantKey") suspend fun updateCategoryForMerchant(merchantKey: String, categoryId: String, primaryCategoryId: String?, updatedAt: Long)
+    @Query("UPDATE transactions SET categoryId=:categoryId, primaryCategoryId=:primaryCategoryId, normalizedMerchantName=:normalizedMerchantName, updatedAtEpochMillis=:updatedAt WHERE merchantKey=:merchantKey AND direction='EXPENSE' AND status='CONFIRMED'") suspend fun updateAiMappingForExpenseMerchant(merchantKey: String, categoryId: String, primaryCategoryId: String?, normalizedMerchantName: String, updatedAt: Long)
     @Query("DELETE FROM transactions WHERE id=:id") suspend fun delete(id: String)
     @Query("DELETE FROM transactions") suspend fun clearAll()
     @Query("SELECT COUNT(*) FROM transactions") suspend fun count(): Int
 }
 @Dao interface LedgerDao {
     @Query("SELECT * FROM ledgers ORDER BY createdAtEpochMillis") fun observeAll(): Flow<List<LedgerEntity>>
+    @Query("SELECT * FROM ledgers ORDER BY createdAtEpochMillis") suspend fun snapshotAll(): List<LedgerEntity>
     @Query("SELECT * FROM ledgers WHERE type='DEFAULT' AND isActive=1 LIMIT 1") suspend fun defaultLedger(): LedgerEntity?
     @Query("SELECT * FROM ledgers WHERE id=:id LIMIT 1") suspend fun findById(id: String): LedgerEntity?
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun save(value: LedgerEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun replaceAll(values: List<LedgerEntity>)
+    @Query("DELETE FROM ledgers") suspend fun clearAll()
     @Query("DELETE FROM ledgers WHERE id=:id AND type != 'DEFAULT'") suspend fun deleteCustom(id: String): Int
     @Query("DELETE FROM ledgers WHERE type != 'DEFAULT'") suspend fun clearCustom()
     @Query("SELECT COUNT(*) FROM ledgers WHERE type != 'DEFAULT'") suspend fun customCount(): Int
 }
 @Dao interface MerchantMemoryDao {
     @Query("SELECT * FROM merchant_memory ORDER BY updatedAtEpochMillis DESC") fun observeAll(): Flow<List<MerchantMemoryEntity>>
+    @Query("SELECT * FROM merchant_memory ORDER BY updatedAtEpochMillis DESC") suspend fun snapshotAll(): List<MerchantMemoryEntity>
     @Query("SELECT * FROM merchant_memory WHERE merchantKey=:key LIMIT 1") suspend fun find(key: String): MerchantMemoryEntity?
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun save(value: MerchantMemoryEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun replaceAll(values: List<MerchantMemoryEntity>)
+    @Query("DELETE FROM merchant_memory WHERE id=:id") suspend fun delete(id: String)
     @Query("DELETE FROM merchant_memory") suspend fun clearAll()
     @Query("SELECT COUNT(*) FROM merchant_memory") suspend fun count(): Int
 }
 @Dao interface CategoryDao {
     @Query("SELECT * FROM categories WHERE enabled=1 ORDER BY sortOrder, name") fun observeAll(): Flow<List<CategoryEntity>>
+    @Query("SELECT * FROM categories ORDER BY sortOrder, name") suspend fun snapshotAll(): List<CategoryEntity>
     @Query("SELECT * FROM categories WHERE normalizedName=:name AND parentKey=:parentKey LIMIT 1") suspend fun findByNormalizedName(name: String, parentKey: String): CategoryEntity?
     @Query("SELECT * FROM categories WHERE id=:id LIMIT 1") suspend fun findById(id: String): CategoryEntity?
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insert(values: List<CategoryEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun save(value: CategoryEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun replaceAll(values: List<CategoryEntity>)
+    @Query("DELETE FROM categories") suspend fun clearAll()
 }
 @Dao interface RawNotificationDao {
     @Query("SELECT * FROM raw_notification_events ORDER BY createdAt DESC LIMIT 100") fun observeRecent(): Flow<List<RawNotificationEntity>>
@@ -57,7 +69,15 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT COUNT(*) FROM location_places") suspend fun count(): Int
 }
 
-@Database(entities = [TransactionEntity::class, LedgerEntity::class, MerchantMemoryEntity::class, CategoryEntity::class, LocationPlaceEntity::class, RawNotificationEntity::class], version = 8, exportSchema = true)
+@Dao interface ExchangeRateDao {
+    @Query("SELECT * FROM exchange_rates ORDER BY fetchedAtEpochMillis DESC, base, quote, requestedDate DESC") fun observeAll(): Flow<List<ExchangeRateEntity>>
+    @Query("SELECT * FROM exchange_rates ORDER BY fetchedAtEpochMillis DESC, base, quote, requestedDate DESC") suspend fun snapshotAll(): List<ExchangeRateEntity>
+    @Query("SELECT * FROM exchange_rates WHERE base=:base AND quote=:quote AND requestedDate=:requestedDate LIMIT 1") suspend fun find(base: String, quote: String, requestedDate: String): ExchangeRateEntity?
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveAll(values: List<ExchangeRateEntity>)
+    @Query("DELETE FROM exchange_rates") suspend fun clearAll()
+}
+
+@Database(entities = [TransactionEntity::class, LedgerEntity::class, MerchantMemoryEntity::class, CategoryEntity::class, LocationPlaceEntity::class, RawNotificationEntity::class, ExchangeRateEntity::class], version = 14, exportSchema = true)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun transactions(): TransactionDao
     abstract fun ledgers(): LedgerDao
@@ -65,6 +85,52 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun categories(): CategoryDao
     abstract fun rawNotifications(): RawNotificationDao
     abstract fun locations(): LocationPlaceDao
+    abstract fun exchangeRates(): ExchangeRateDao
+}
+
+val MIGRATION_13_14 = object : androidx.room.migration.Migration(13, 14) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE ledgers ADD COLUMN budgetType TEXT")
+        db.execSQL("ALTER TABLE ledgers ADD COLUMN budgetAmountMinor INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE ledgers ADD COLUMN totalBudgetStartTs INTEGER")
+    }
+}
+
+val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE transactions ADD COLUMN normalizedMerchantName TEXT")
+        db.execSQL("ALTER TABLE transactions ADD COLUMN aiAnalysisStatus TEXT NOT NULL DEFAULT 'NONE'")
+        db.execSQL("ALTER TABLE transactions ADD COLUMN aiSuggestedCategoryId TEXT")
+        db.execSQL("ALTER TABLE transactions ADD COLUMN aiSuggestedCategoryName TEXT")
+        db.execSQL("ALTER TABLE transactions ADD COLUMN aiAnalyzedAtEpochMillis INTEGER")
+        db.execSQL("ALTER TABLE transactions ADD COLUMN aiAnalysisError TEXT")
+    }
+}
+
+val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE merchant_memory ADD COLUMN normalizedMerchantName TEXT")
+    }
+}
+
+val MIGRATION_11_12 = object : androidx.room.migration.Migration(11, 12) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE merchant_memory ADD COLUMN aiAnalyzed INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE transactions ADD COLUMN aiSuggestedMerchantTerms TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE merchant_memory ADD COLUMN matchTerms TEXT NOT NULL DEFAULT ''")
+    }
+}
+
+val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS exchange_rates (base TEXT NOT NULL, quote TEXT NOT NULL, requestedDate TEXT NOT NULL, rateDate TEXT NOT NULL, rate TEXT NOT NULL, fetchedAtEpochMillis INTEGER NOT NULL, PRIMARY KEY(base, quote, requestedDate))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_exchange_rates_fetchedAtEpochMillis ON exchange_rates(fetchedAtEpochMillis)")
+    }
 }
 
 val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
